@@ -19,11 +19,13 @@
 
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <utility>
 #include <vector>
 
 namespace deskflow {
 
+class DataControlClipboard;
 class EiClipboard;
 
 class PortalInputCapture
@@ -34,6 +36,8 @@ public:
 
   // Get the clipboard for the specified ID
   EiClipboard *getClipboard(ClipboardID id) const;
+  // Offer the clipboard cache locally after a remote computer filled it
+  void clipboardChanged();
   void enable();
   void disable();
   void release();
@@ -61,6 +65,7 @@ private:
   void handleSelectionTransfer(XdpSession *session, const char *mimeType, uint32_t serial) const;
   void readClipboardSelection(XdpSession *session) const;
   void claimClipboardOwnership(XdpSession *session) const;
+  void readDataControlSelection() const;
 
   /// g_signal_connect callback wrapper
   static void sessionClosed(XdpSession *session, const gpointer data)
@@ -172,6 +177,8 @@ private:
   std::vector<BarrierInfo> m_barrierInfo;
 
   EiClipboard *m_clipboard = nullptr;
+  // Clipboard fallback when the portal backend has no Clipboard interface
+  std::unique_ptr<DataControlClipboard> m_dataControl;
 };
 
 } // namespace deskflow

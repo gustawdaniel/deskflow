@@ -18,6 +18,15 @@
 #ifdef HAVE_LIBPORTAL_CLIPBOARD
 #include "platform/PortalClipboard.h"
 #endif
+#ifdef HAVE_DATA_CONTROL
+#include "platform/DataControlClipboard.h"
+#else
+namespace deskflow {
+class DataControlClipboard
+{
+};
+} // namespace deskflow
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -32,6 +41,9 @@
 #include <QDataStream>
 #include <QFile>
 #include <QImage>
+#include <QList>
+#include <QPair>
+#include <QSet>
 #include <QtEndian>
 
 namespace deskflow {
@@ -189,6 +201,9 @@ PortalInputCapture::PortalInputCapture(EiComputer *computer, IEventQueue *events
 
 PortalInputCapture::~PortalInputCapture()
 {
+  // Stop the clipboard thread before the cache it serves from goes away.
+  m_dataControl.reset();
+
   if (g_main_loop_is_running(m_glibMainLoop))
     g_main_loop_quit(m_glibMainLoop);
 
@@ -256,6 +271,106 @@ void PortalInputCapture::claimClipboardOwnership([[maybe_unused]] XdpSession *se
 #endif
 }
 
+void PortalInputCapture::readDataControlSelection() const
+{
+#if defined(HAVE_DATA_CONTROL) && defined(HAVE_LIBPORTAL_CLIPBOARD)
+  struct MimeFormat
+  {
+    const char *mime;
+    IClipboard::Format format;
+  };
+  // Richer formats first; later entries only fill formats not read yet.
+  static constexpr MimeFormat kMimes[] = {
+      {"image/png", IClipboard::Format::Bitmap},
+      {"text/html", IClipboard::Format::HTML},
+      {"text/plain;charset=utf-8", IClipboard::Format::Text},
+      {"text/plain", IClipboard::Format::Text},
+      {"UTF8_STRING", IClipboard::Format::Text},
+  };
+
+  const auto available = m_dataControl->selectionMimeTypes();
+  if (available.empty()) {
+    LOG_DEBUG("no current data-control clipboard selection");
+    return;
+  }
+
+  const qint64 maxBytes = static_cast<qint64>(m_computer->maximumClipboardSize()) * 1024;
+  QList<QPair<IClipboard::Format, QByteArray>> reads;
+  QSet<IClipboard::Format> seen;
+  for (const auto &entry : kMimes) {
+    if (seen.contains(entry.format) || std::ranges::find(available, entry.mime) == available.end())
+      continue;
+
+    auto bytes = m_dataControl->read(entry.mime, maxBytes);
+    if (entry.format != IClipboard::Format::Bitmap) {
+      while (bytes.endsWith('\0'))
+        bytes.chop(1);
+      bytes.replace("\r\n", "\n");
+    }
+
+    auto data = PortalClipboard::decodeFormat(entry.format, bytes);
+    if (data.isEmpty())
+      continue;
+
+    reads.append({entry.format, std::move(data)});
+    seen.insert(entry.format);
+  }
+
+  if (reads.isEmpty()) {
+    LOG_DEBUG("data-control clipboard read produced no data, leaving existing clipboard intact");
+    return;
+  }
+
+  m_clipboard->open(0);
+  m_clipboard->empty();
+  for (const auto &[format, data] : reads)
+    m_clipboard->add(format, data.toStdString());
+  m_clipboard->close();
+  LOG_DEBUG("data-control clipboard read local selection, formats: %lld", static_cast<long long>(reads.size()));
+#endif
+}
+
+void PortalInputCapture::clipboardChanged()
+{
+#if defined(HAVE_DATA_CONTROL) && defined(HAVE_LIBPORTAL_CLIPBOARD)
+  if (!m_dataControl)
+    return;
+
+  std::vector<std::string> mimes;
+  m_clipboard->open(0);
+  if (m_clipboard->has(IClipboard::Format::Bitmap))
+    mimes.emplace_back("image/png");
+  if (m_clipboard->has(IClipboard::Format::HTML))
+    mimes.emplace_back("text/html");
+  if (m_clipboard->has(IClipboard::Format::Text)) {
+    for (const char *mime : {"text/plain;charset=utf-8", "text/plain", "UTF8_STRING", "STRING", "TEXT"})
+      mimes.emplace_back(mime);
+  }
+  m_clipboard->close();
+
+  if (mimes.empty()) {
+    LOG_DEBUG("clipboard cache empty, nothing to offer via data-control");
+    return;
+  }
+
+  LOG_DEBUG("offering clipboard via data-control, mimes: %zu", mimes.size());
+  m_dataControl->setSelection(mimes, [this](const std::string &mime) {
+    IClipboard::Format format = IClipboard::Format::Text;
+    if (mime == "image/png")
+      format = IClipboard::Format::Bitmap;
+    else if (mime == "text/html")
+      format = IClipboard::Format::HTML;
+
+    m_clipboard->open(0);
+    QByteArray raw;
+    if (m_clipboard->has(format))
+      raw = QByteArray::fromStdString(m_clipboard->get(format));
+    m_clipboard->close();
+    return PortalClipboard::encodeFormat(format, raw);
+  });
+#endif
+}
+
 void PortalInputCapture::readClipboardSelection(XdpSession *session) const
 {
 #ifdef HAVE_LIBPORTAL_CLIPBOARD
@@ -312,6 +427,14 @@ void PortalInputCapture::setupSession(XdpInputCaptureSession *session)
       return;
     }
   }
+
+#ifdef HAVE_DATA_CONTROL
+  if (!xdp_session_is_clipboard_enabled(parentSession) && !m_dataControl) {
+    m_dataControl = DataControlClipboard::create();
+    if (!m_dataControl)
+      LOG_WARN("portal has no clipboard and wayland data-control is unavailable, clipboard sharing disabled");
+  }
+#endif
 #endif
 
   auto fd = xdp_input_capture_session_connect_to_eis(session, &error);
@@ -740,7 +863,15 @@ void PortalInputCapture::handleActivated(
   m_isActive = true;
 
 #ifdef HAVE_LIBPORTAL_CLIPBOARD
-  if (m_session) {
+#ifdef HAVE_DATA_CONTROL
+  if (m_dataControl) {
+    LOG_DEBUG("reading data-control clipboard selection on activation");
+    if (!m_dataControl->ownsSelection())
+      readDataControlSelection();
+    m_computer->sendClipboardEvent(EventTypes::ClipboardGrabbed, kClipboardClipboard);
+  } else
+#endif
+      if (m_session) {
     LOG_DEBUG("reading clipboard selection on activation");
     m_computer->sendClipboardEvent(EventTypes::ClipboardGrabbed, kClipboardClipboard);
 

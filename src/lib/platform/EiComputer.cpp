@@ -494,7 +494,10 @@ bool EiComputer::setClipboard(ClipboardID id, const IClipboard *clipboard)
     if (!targetClipboard) {
       return false;
     }
-    return IClipboard::copy(targetClipboard, clipboard);
+    const bool ok = IClipboard::copy(targetClipboard, clipboard);
+    if (ok && id == kClipboardClipboard)
+      m_portalInputCapture->clipboardChanged();
+    return ok;
   }
 
   // Otherwise use our own clipboard

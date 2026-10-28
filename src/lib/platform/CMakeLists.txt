@@ -175,6 +175,29 @@ elseif(UNIX)
           PortalClipboard.cpp
           PortalClipboard.h
         )
+        # Clipboard fallback for portals without a Clipboard interface (e.g. Hyprland)
+        pkg_check_modules(WAYLAND_CLIENT IMPORTED_TARGET wayland-client)
+        pkg_check_modules(WAYLAND_PROTOCOLS wayland-protocols>=1.39)
+        find_program(WAYLAND_SCANNER wayland-scanner)
+        if(WAYLAND_CLIENT_FOUND AND WAYLAND_PROTOCOLS_FOUND AND WAYLAND_SCANNER)
+          pkg_get_variable(WAYLAND_PROTOCOLS_DIR wayland-protocols pkgdatadir)
+          set(EXT_DATA_CONTROL_XML ${WAYLAND_PROTOCOLS_DIR}/staging/ext-data-control/ext-data-control-v1.xml)
+          set(EXT_DATA_CONTROL_H ${CMAKE_CURRENT_BINARY_DIR}/ext-data-control-v1-client-protocol.h)
+          set(EXT_DATA_CONTROL_C ${CMAKE_CURRENT_BINARY_DIR}/ext-data-control-v1-protocol.c)
+          add_custom_command(
+            OUTPUT ${EXT_DATA_CONTROL_H} ${EXT_DATA_CONTROL_C}
+            COMMAND ${WAYLAND_SCANNER} client-header ${EXT_DATA_CONTROL_XML} ${EXT_DATA_CONTROL_H}
+            COMMAND ${WAYLAND_SCANNER} private-code ${EXT_DATA_CONTROL_XML} ${EXT_DATA_CONTROL_C}
+            DEPENDS ${EXT_DATA_CONTROL_XML}
+          )
+          list(APPEND PLATFORM_SOURCES
+            DataControlClipboard.cpp
+            DataControlClipboard.h
+            ${EXT_DATA_CONTROL_H}
+            ${EXT_DATA_CONTROL_C}
+          )
+          set(HAVE_DATA_CONTROL TRUE)
+        endif()
       endif()
       if(HAVE_LP_SHORTCUTS)
         list(APPEND PLATFORM_SOURCES
@@ -207,6 +230,11 @@ if(UNIX)
     endif()
     if (HAVE_LP_CLIPBOARD)
       target_compile_definitions(platform PUBLIC HAVE_LIBPORTAL_CLIPBOARD)
+    endif()
+    if (HAVE_DATA_CONTROL)
+      target_compile_definitions(platform PRIVATE HAVE_DATA_CONTROL)
+      target_include_directories(platform PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+      target_link_libraries(platform PRIVATE PkgConfig::WAYLAND_CLIENT)
     endif()
     if (HAVE_LP_SHORTCUTS)
       target_compile_definitions(platform PUBLIC HAVE_LIBPORTAL_SHORTCUTS)
