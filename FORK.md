@@ -55,14 +55,36 @@ is rewritten when upstream moves.
 
 ## Install (Arch, Hyprland server)
 
+Only the machine running the Deskflow **server on Hyprland** needs this fork.
+Clients (macOS, Windows, other Linux) keep the official Deskflow.
+
 ```sh
-cd packaging/arch
-makepkg -si
-systemctl --user restart deskflow-server   # or however deskflow-core server is started
+git clone -b hyprland-clipboard https://github.com/gustawdaniel/deskflow.git
+cd deskflow/packaging/arch
+makepkg -si          # answer "y" when pacman offers to remove deskflow / deskflow-git
 ```
 
-The package conflicts with `deskflow`/`deskflow-git`, so pacman will not
-overwrite it during `-Syu`. Rebuild it after the workflow updates the branch.
+The package installs only `deskflow-core` (no GUI). Start the server with your
+existing config, e.g.:
+
+```sh
+deskflow-core server -s ~/.config/Deskflow/Deskflow.conf
+```
+
+or restart the unit/service that already runs it. Check that the fallback is
+active:
+
+```sh
+journalctl --user -u <your-deskflow-unit> | grep "data-control"
+# INFO: using wayland data-control for clipboard sharing
+```
+
+Make sure `clipboardSharing = true` (server section) in your Deskflow config.
+
+**Update:** run `makepkg -si` again in `packaging/arch` after `git pull`
+(the branch is rebased on upstream every Monday).
+
+**Go back to upstream:** `sudo pacman -R deskflow-hyprland-git && sudo pacman -S deskflow`.
 
 ## License
 
