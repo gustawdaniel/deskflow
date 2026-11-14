@@ -7,6 +7,7 @@
 
 #include <QByteArray>
 
+#include <atomic>
 #include <condition_variable>
 #include <deque>
 #include <functional>
@@ -104,7 +105,7 @@ private:
   bool m_running = false;
 
   int m_wakeFds[2] = {-1, -1};
-  bool m_stop = false;
+  std::atomic_bool m_stop = false;
   std::thread m_thread;
 };
 

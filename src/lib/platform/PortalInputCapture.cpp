@@ -336,15 +336,29 @@ void PortalInputCapture::clipboardChanged()
   if (!m_dataControl)
     return;
 
+  // Snapshot the cache here, on the thread that owns m_clipboard. The provider
+  // runs on the data-control thread whenever another app pastes; reading
+  // m_clipboard from there would race with the next remote clipboard update.
   std::vector<std::string> mimes;
+  auto snapshot = std::make_shared<std::map<std::string, QByteArray>>();
+  const auto take = [this](IClipboard::Format format) {
+    return PortalClipboard::encodeFormat(format, QByteArray::fromStdString(m_clipboard->get(format)));
+  };
   m_clipboard->open(0);
-  if (m_clipboard->has(IClipboard::Format::Bitmap))
+  if (m_clipboard->has(IClipboard::Format::Bitmap)) {
     mimes.emplace_back("image/png");
-  if (m_clipboard->has(IClipboard::Format::HTML))
+    (*snapshot)["image/png"] = take(IClipboard::Format::Bitmap);
+  }
+  if (m_clipboard->has(IClipboard::Format::HTML)) {
     mimes.emplace_back("text/html");
+    (*snapshot)["text/html"] = take(IClipboard::Format::HTML);
+  }
   if (m_clipboard->has(IClipboard::Format::Text)) {
-    for (const char *mime : {"text/plain;charset=utf-8", "text/plain", "UTF8_STRING", "STRING", "TEXT"})
+    const auto text = take(IClipboard::Format::Text);
+    for (const char *mime : {"text/plain;charset=utf-8", "text/plain", "UTF8_STRING", "STRING", "TEXT"}) {
       mimes.emplace_back(mime);
+      (*snapshot)[mime] = text;
+    }
   }
   m_clipboard->close();
 
@@ -354,19 +368,9 @@ void PortalInputCapture::clipboardChanged()
   }
 
   LOG_DEBUG("offering clipboard via data-control, mimes: %zu", mimes.size());
-  m_dataControl->setSelection(mimes, [this](const std::string &mime) {
-    IClipboard::Format format = IClipboard::Format::Text;
-    if (mime == "image/png")
-      format = IClipboard::Format::Bitmap;
-    else if (mime == "text/html")
-      format = IClipboard::Format::HTML;
-
-    m_clipboard->open(0);
-    QByteArray raw;
-    if (m_clipboard->has(format))
-      raw = QByteArray::fromStdString(m_clipboard->get(format));
-    m_clipboard->close();
-    return PortalClipboard::encodeFormat(format, raw);
+  m_dataControl->setSelection(mimes, [snapshot](const std::string &mime) {
+    const auto it = snapshot->find(mime);
+    return it != snapshot->end() ? it->second : QByteArray();
   });
 #endif
 }

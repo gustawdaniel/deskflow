@@ -171,6 +171,11 @@ void DataControlClipboard::setSelection(const std::vector<std::string> &mimes, P
         &DataControlClipboard::onSourceSend, &DataControlClipboard::onSourceCancelled
     };
 
+    // The compositor may have finished the device (onFinished) while this task
+    // was queued; the final drain in run() still executes it.
+    if (!m_device || !m_manager)
+      return;
+
     if (m_source)
       ext_data_control_source_v1_destroy(m_source);
 
