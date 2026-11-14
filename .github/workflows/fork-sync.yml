@@ -1,0 +1,83 @@
+# Keeps the fork's patch queue (branch hyprland-clipboard) on top of upstream
+# Deskflow. See FORK.md. Changes nothing when the rebase or the build fails;
+# opens an issue instead.
+name: Fork sync (rebase on upstream + build)
+
+on:
+  schedule:
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: fork-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    env:
+      BRANCH: hyprland-clipboard
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Dependencies
+        run: |
+          pacman -Syu --noconfirm --needed git github-cli cmake ninja python pkgconf \
+            qt6-base qt6-tools qt6-declarative qt6-svg libei libportal libx11 libxext libxi \
+            libxinerama libxkbcommon libxkbcommon-x11 libxkbfile libxrandr libxtst openssl \
+            xorgproto wayland wayland-protocols
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BRANCH }}
+          fetch-depth: 0
+
+      - name: Rebase on upstream/master
+        id: rebase
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/deskflow/deskflow.git
+          git fetch --quiet upstream master
+          if git merge-base --is-ancestor upstream/master HEAD; then
+            echo "Already on top of upstream/master ($(git rev-parse --short upstream/master))."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          elif git rebase upstream/master; then
+            echo "Rebased on upstream/master ($(git rev-parse --short upstream/master))."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            git rebase --abort
+            echo "failure=rebase" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      - name: Build deskflow-core (no GUI)
+        id: build
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_GUI=OFF -DBUILD_INSTALLER=OFF -Wno-dev
+          cmake --build build --target deskflow-core
+          # the fallback must actually be compiled in (it is optional in CMake)
+          grep -aq "using wayland data-control for clipboard sharing" build/bin/deskflow-core
+
+      - name: Push rebased branch
+        if: steps.rebase.outputs.changed == 'true'
+        run: git push --force-with-lease origin "HEAD:${BRANCH}"
+
+      - name: Report failure
+        if: failure()
+        run: |
+          title="fork-sync: patch queue no longer applies or builds on upstream"
+          body="Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          upstream/master: $(git rev-parse --short upstream/master 2>/dev/null || echo unknown)
+          Failed step: ${{ steps.rebase.outputs.failure || 'build' }}
+
+          The branch ${BRANCH} was left unchanged. Rebase it by hand (see FORK.md)."
+          if [ -z "$(gh issue list --state open --search "$title in:title" --json number -q '.[].number')" ]; then
+            gh issue create --title "$title" --body "$body"
+          fi

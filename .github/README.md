@@ -1,3 +1,5 @@
+> **Fork:** Deskflow with clipboard sharing on a Hyprland server (`ext-data-control-v1` fallback). What differs from upstream and how it is kept in sync: [FORK.md](../FORK.md).
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://github.com/deskflow/deskflow-artwork/blob/main/logo/deskflow-logo-dark-200px.png?raw=true">
   <source media="(prefers-color-scheme: light)" srcset="https://github.com/deskflow/deskflow-artwork/blob/main/logo/deskflow-logo-light-200px.png?raw=true">

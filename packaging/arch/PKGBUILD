@@ -1,0 +1,40 @@
+# deskflow-core from gustawdaniel/deskflow (branch hyprland-clipboard):
+# Deskflow with clipboard sharing on a Hyprland server (ext-data-control-v1). See FORK.md.
+pkgname=deskflow-hyprland-git
+_repo=deskflow
+pkgver=r0
+pkgrel=1
+pkgdesc="Deskflow core (no GUI) with clipboard sharing on Hyprland"
+arch=('x86_64' 'aarch64')
+url="https://github.com/gustawdaniel/deskflow"
+license=('GPL-2.0-only')
+depends=(glibc libei libgcc libportal libstdc++ libx11 libxext libxi libxinerama libxkbcommon
+         libxkbcommon-x11 libxkbfile libxrandr libxtst openssl qt6-base wayland)
+makedepends=(cmake git ninja python qt6-tools xorgproto wayland-protocols)
+provides=('deskflow')
+conflicts=('deskflow' 'deskflow-git')
+source=("$_repo::git+https://github.com/gustawdaniel/deskflow.git#branch=hyprland-clipboard")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$_repo"
+  printf '%s.r%s.g%s' "$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')" \
+    "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+build() {
+  cd "$_repo"
+  cmake -S . -B build -G Ninja \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DCMAKE_BUILD_TYPE=None \
+    -DBUILD_GUI=OFF \
+    -DBUILD_INSTALLER=OFF \
+    -Wno-dev
+  cmake --build build --target deskflow-core
+}
+
+package() {
+  cd "$_repo"
+  install -Dm755 build/bin/deskflow-core "$pkgdir/usr/bin/deskflow-core"
+  install -Dm644 FORK.md "$pkgdir/usr/share/doc/$pkgname/FORK.md"
+}
