@@ -81,8 +81,13 @@ journalctl --user -u <your-deskflow-unit> | grep "data-control"
 
 Make sure `clipboardSharing = true` (server section) in your Deskflow config.
 
-**Update:** run `makepkg -si` again in `packaging/arch` after `git pull`
-(the branch is rebased on upstream every Monday).
+**Update:** the branch is rebased on upstream every Monday, so its history is
+rewritten — use reset instead of `git pull`:
+
+```sh
+cd deskflow && git fetch && git reset --hard origin/hyprland-clipboard
+cd packaging/arch && makepkg -si
+```
 
 **Go back to upstream:** `sudo pacman -R deskflow-hyprland-git && sudo pacman -S deskflow`.
 
